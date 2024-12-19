@@ -72,7 +72,6 @@ class UBXNMEAParserSingleThread {
 
         void setWrongInputThreshold(int threshold) {m_WRONG_INPUT_THRESHOLD=threshold;}
     private:
-        /* Buffer structure to be printed to the user */
         typedef struct Output {
             char ts_pos[100],
                     ts_pos_ubx[100],
@@ -105,9 +104,12 @@ class UBXNMEAParserSingleThread {
                  lu_alt, lu_alt_ubx, lu_alt_nmea,
                  lu_comp_acc,
                  lu_comp_ang_rate,
-                 lu_sog_cog,
-                 lu_sog_cog_ubx,
-                 lu_sog_cog_nmea;						    // Last updates on relevant information
+                 lu_sog,
+                 lu_cog,
+                 lu_sog_ubx,
+                 lu_cog_ubx,
+                 lu_sog_nmea,
+                 lu_cog_nmea;						    // Last updates on relevant information
         } out_t;
 
         typedef struct AgeInfo {
@@ -116,12 +118,28 @@ class UBXNMEAParserSingleThread {
                  age_alt, age_alt_ubx, age_alt_nmea,
                  age_comp_acc,
                  age_comp_ang_rate,
-                 age_sog_cog,
-                 age_sog_cog_ubx,
-                 age_sog_cog_nmea;						    // Last updates on relevant information
+                 age_sog,
+                 age_cog,
+                 age_sog_ubx,
+                 age_cog_ubx,
+                 age_sog_nmea,
+                 age_cog_nmea,
+
+                 modified_age_pos, modified_age_pos_ubx, modified_age_pos_nmea,
+                 modified_age_acc, modified_age_att,
+                 modified_age_alt, modified_age_alt_ubx, modified_age_alt_nmea,
+                 modified_age_comp_acc,
+                 modified_age_comp_ang_rate,
+                 modified_age_sog,
+                 modified_age_cog,
+                 modified_age_sog_ubx,
+                 modified_age_cog_ubx,
+                 modified_age_sog_nmea,
+                 modified_age_cog_nmea;
         } age_t;
 
         std::atomic<out_t> m_outBuffer;
+        std::atomic<out_t> m_prevMsgOutBuffer;
         std::atomic<bool> *m_terminatorFlagPtr = nullptr; // Used in endless loops in order to terminate the program
         std::atomic<bool> m_stopParserFlag = false;
         bool m_parser_started=false;
@@ -152,10 +170,9 @@ class UBXNMEAParserSingleThread {
 
         // Mathematical and buffer operations
         static double decimal_deg(double value, char quadrant);
-        int32_t hexToSigned(std::vector<uint8_t> data);
+        int32_t hexToSigned(const std::vector<uint8_t>& data);
         long hexToSignedValue(uint8_t value);
-        void clearBuffer();
-        void printBuffer();
+        bool areAlmostEqual(double value1, double value2, double relativeEpsilon, double absoluteEpsilon);
 
         // Parsers
         void parseNmeaGns(std::string nmea_response);
@@ -169,6 +186,7 @@ class UBXNMEAParserSingleThread {
 
         void readFromSerial();
         void readData();
+
 };
 
 #endif // UBXNMEAPARSERSINGLETHREAD_H

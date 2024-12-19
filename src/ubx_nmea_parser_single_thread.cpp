@@ -11,13 +11,14 @@
 #include <cmath>
 #include <ctime>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <thread>
 #include <utility>
 #include <chrono>
 #include <algorithm>
 #include <iomanip>
-#include <unistd.h>
+//#include <unistd.h>
 
 using namespace std::chrono;
 
@@ -69,43 +70,24 @@ UBXNMEAParserSingleThread::decimal_deg(double value, char quadrant) {
  *  NOTE: This works only for 3 and 4-dimensioned arrays but it can be extended using
  *  a uint64_t return variable. */
 int32_t
-UBXNMEAParserSingleThread::hexToSigned(std::vector<uint8_t> data) {
-    int32_t value = 0;
-    if (data.size() == 2) {
-        value |= (data[0] << 8);
-        value |= data[1];
-        if (value & 0x80000000) {
-            value = ~value + 1;
-            return -static_cast<int32_t>(value);
-        }
-        return value;
-    }
-    else if (data.size() == 3) {
-        value |= (data[0] << 16);
-        value |= (data[1] << 8);
-        value |= data[2];
-        if (value & 0x80000000) {
-            value = ~value + 1;
-            return -static_cast<int32_t>(value);
-        }
-        return value;
-    }
-    else if (data.size() == 4) {
-        value |= (data[0] << 24);
-        value |= (data[1] << 16);
-        value |= (data[2] << 8);
-        value |= data[3];
-        if (value & 0x80000000) {
-            value = ~value + 1;
-            return -static_cast<int32_t>(value);
-        }
-        return value;
-    }
-    else {
-        std::cerr << "Fatal Error: Invalid std::vector data size. Check ESF-RAW/NAV-ATT. Terminating. ";
-        //*m_terminatorFlagPtr = true; // Breaks the endless loop and terminates the program
+UBXNMEAParserSingleThread::hexToSigned(const std::vector<uint8_t>& data) {
+    if (data.size() < 2 || data.size() > 4) {
+        std::cerr << "Error in UBXNMEAParserSingleThread::hexToSigned: Invalid data size ("
+                  << data.size() << "). Expected 2, 3, or 4 bytes.\n";
         return -1;
     }
+
+    uint32_t unsignedValue = 0;
+    for (size_t i = 0; i < data.size(); ++i) {
+        unsignedValue |= static_cast<uint32_t>(data[i]) << (8 * (data.size() - 1 - i));
+    }
+
+    // Detect and handle sign bit (two's complement for signed conversion)
+    if (unsignedValue & (1U << (8 * data.size() - 1))) {
+        return -static_cast<int32_t>(~unsignedValue + 1);
+    }
+
+    return static_cast<int32_t>(unsignedValue);
 }
 
 long
@@ -120,80 +102,17 @@ UBXNMEAParserSingleThread::hexToSignedValue(uint8_t value) {
     return -((long)value & signMask) | ((long)value & complementMask);
 }
 
-void
-UBXNMEAParserSingleThread::clearBuffer() {
-	out_t tmp;
-	strcpy(tmp.ts_pos,"");
-    strcpy(tmp.ts_pos_ubx,"");
-    strcpy(tmp.ts_pos_nmea,"");
-	strcpy(tmp.ts_utc_time_ubx,"");
-    strcpy(tmp.ts_utc_time_nmea,"");
-	strcpy(tmp.ts_acc,"");
-	strcpy(tmp.ts_att,"");
-	strcpy(tmp.ts_alt,"");
-    strcpy(tmp.ts_comp_acc,"");
-    strcpy(tmp.ts_comp_ang_rate,"");
-	strcpy(tmp.ts_sog_cog_ubx,"");
-	strcpy(tmp.ts_sog_cog_nmea,"");
-	strcpy(tmp.fix_ubx,"");
-	strcpy(tmp.fix_nmea,"");
-	tmp.raw_acc_x = 0;
-	tmp.raw_acc_y = 0;
-	tmp.raw_acc_z = 0;
-	tmp.comp_acc_x = 0;
-	tmp.comp_acc_y = 0;
-	tmp.comp_acc_z = 0;
-    tmp.comp_ang_rate_x = 0;
-    tmp.comp_ang_rate_y = 0;
-    tmp.comp_ang_rate_z = 0;
-	tmp.lat = 0;
-    tmp.lat_ubx = 0;
-    tmp.lat_nmea = 0;
-	tmp.lon = 0;
-    tmp.lon_ubx = 0;
-    tmp.lon_nmea = 0;
-	tmp.alt = 0;
-    tmp.alt_ubx = 0;
-    tmp.alt_nmea = 0;
-	tmp.roll = 0;
-	tmp.pitch = 0;
-	tmp.heading = 0;
-    tmp.sog = 0;
-	tmp.sog_ubx = 0;
-	tmp.sog_nmea = 0;
-    tmp.cog = 0;
-	tmp.cog_ubx = 0;
-	tmp.cog_nmea = 0;
-	tmp.lu_pos = 0;
-    tmp.lu_pos_ubx = 0;
-    tmp.lu_pos_nmea = 0;
-	tmp.lu_acc = 0;
-	tmp.lu_att = 0;
-	tmp.lu_alt = 0;
-    tmp.lu_alt_ubx = 0;
-    tmp.lu_alt_nmea = 0;
-    tmp.lu_comp_acc = 0;
-    tmp.lu_comp_ang_rate = 0;
-    tmp.lu_sog_cog = 0;
-	tmp.lu_sog_cog_ubx = 0;
-	tmp.lu_sog_cog_nmea = 0;
-	m_outBuffer.store(tmp);
-	//printf("\n\nBuffer cleared\n\n");
-}
+bool
+UBXNMEAParserSingleThread::areAlmostEqual(double value1, double value2,
+                    double relativeEpsilon = std::numeric_limits<double>::epsilon(),
+                    double absoluteEpsilon = std::numeric_limits<double>::epsilon()) {
 
-void
-UBXNMEAParserSingleThread::printBuffer() {
-	out_t tmp = m_outBuffer.load();
-	printf("[UBX  - UTC TIME]  - %s\n", tmp.ts_utc_time_ubx);
-    printf("[NMEA - UTC TIME]  - %s\n", tmp.ts_utc_time_nmea);
-	printf("[UBX]  - %s\n", tmp.fix_ubx);
-	printf("[NMEA] - %s\n\n", tmp.fix_nmea);
-	printf("[Position]\nLat: %.8f   deg   -   Lon: %.8f   deg  -   Altitude: %.2f   m\n\n",tmp.lat,tmp.lon,tmp.alt);
-	printf("[Speed over ground]\n(UBX): %.3f m/s   -   (NMEA): %.3f m/s\n\n",tmp.sog_ubx,tmp.sog_nmea);
-	printf("[Course over ground]\n(UBX): %.3f deg   -   (NMEA): %.3f deg\n\n",tmp.cog_ubx,tmp.cog_nmea);
-	printf("[Accelerations (gravity-free)]\nX: %.3f  m/s^2  Y: %.3f  m/s^2  Z: %.3f  m/s^2\n\n",tmp.comp_acc_x,tmp.comp_acc_y,tmp.comp_acc_z);
-	printf("[Raw accelerations]\nX: %.3f  m/s^2  Y: %.3f  m/s  Z: %.3f  m/s\n\n",tmp.raw_acc_x,tmp.raw_acc_y,tmp.raw_acc_z);
-	printf("[Attitude]\nRoll: %.3f  deg  Pitch: %.3f  deg  Heading: %.3f  deg\n\n",tmp.roll,tmp.pitch,tmp.heading);
+    double absDiff = std::abs(value1 - value2);
+    if (absDiff <= absoluteEpsilon) {
+        return true;
+    }
+    double largest = std::max(std::abs(value1), std::abs(value2));
+    return absDiff <= relativeEpsilon * largest;
 }
 
 bool UBXNMEAParserSingleThread::validateUbxMessage(std::vector<uint8_t> msg) {
@@ -387,6 +306,7 @@ UBXNMEAParserSingleThread::getPositionNmea(long *age_us, bool print_timestamp_an
 void
 UBXNMEAParserSingleThread::parseNmeaGns(std::string nmea_response) {
 
+    out_t prev_msg = m_prevMsgOutBuffer.load();
     out_t out_nmea = m_outBuffer.load();
 
     std::vector<std::string> fields;
@@ -439,6 +359,46 @@ UBXNMEAParserSingleThread::parseNmeaGns(std::string nmea_response) {
 	}
 	else out_nmea.alt = 800001; // AltitudeValue_unavailable
 
+    // Account for the receiver silence offset
+    if (!areAlmostEqual(prev_msg.lat,out_nmea.lat) && !areAlmostEqual(prev_msg.lon,out_nmea.lon)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_nmea.ts_pos,std::ctime(&now));
+
+        // Uncomment this line to join the position timestamp and the UTC time string
+        // strcat(out_nmea.ts_pos, utc_time.data());
+        strcpy(out_nmea.ts_utc_time_nmea, utc_time.data());
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_pos = update.time_since_epoch().count() - prev_msg.lu_pos;
+            m_debug_age_info.modified_age_pos_nmea = update.time_since_epoch().count() - prev_msg.lu_pos_nmea;
+            m_debug_age_info.modified_age_alt = update.time_since_epoch().count() - prev_msg.lu_alt;
+            m_debug_age_info.modified_age_alt_nmea = update.time_since_epoch().count() - prev_msg.lu_alt_nmea;
+        }
+        // Converts time_point to microseconds
+        out_nmea.lu_pos = update.time_since_epoch().count();
+        out_nmea.lu_pos_nmea = out_nmea.lu_pos;
+        out_nmea.lu_alt = update.time_since_epoch().count();
+        out_nmea.lu_alt_nmea = out_nmea.lu_alt;
+
+        // Validates data
+        m_pos_valid = true;
+        m_alt_valid = true;
+
+        // Updates the buffer
+
+        m_outBuffer.store(out_nmea);
+        m_prevMsgOutBuffer.store(out_nmea);
+
+        return;
+    }
+
 	// Produces and processes the current date-time timestamp
 	std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	strcpy(out_nmea.ts_pos,std::ctime(&now));
@@ -468,6 +428,7 @@ UBXNMEAParserSingleThread::parseNmeaGns(std::string nmea_response) {
 
     // Updates the buffer
 	m_outBuffer.store(out_nmea);
+    m_prevMsgOutBuffer.store(out_nmea);
 }
 
 /** Checks and parses a GNGGA NMEA sentence
@@ -973,11 +934,11 @@ UBXNMEAParserSingleThread::getSpeedUbx(long *age_us, bool print_timestamp_and_ag
 
     auto now = time_point_cast<microseconds>(system_clock::now());
     auto end = now.time_since_epoch().count();
-    long local_age_us = end - tmp.lu_sog_cog_ubx;
+    long local_age_us = end - tmp.lu_sog_ubx;
 
     if (m_debug_age_info_rate) {
-        m_debug_age_info.age_sog_cog = local_age_us;
-        m_debug_age_info.age_sog_cog_ubx = local_age_us;
+        m_debug_age_info.age_sog = local_age_us;
+        m_debug_age_info.age_sog_ubx = local_age_us;
     }
 
 
@@ -1006,11 +967,11 @@ UBXNMEAParserSingleThread::getSpeedNmea(long *age_us, bool print_timestamp_and_a
 
     auto now = time_point_cast<microseconds>(system_clock::now());
     auto end = now.time_since_epoch().count();
-    long local_age_us = end - tmp.lu_sog_cog_nmea;
+    long local_age_us = end - tmp.lu_sog_nmea;
 
     if (m_debug_age_info_rate) {
-        m_debug_age_info.age_sog_cog = local_age_us;
-        m_debug_age_info.age_sog_cog_nmea = local_age_us;
+        m_debug_age_info.age_sog = local_age_us;
+        m_debug_age_info.age_sog_nmea = local_age_us;
     }
 
     if (local_age_us >= getValidityThreshold()) {
@@ -1037,11 +998,11 @@ UBXNMEAParserSingleThread::getCourseOverGroundUbx(long *age_us, bool print_times
 
     auto now = time_point_cast<microseconds>(system_clock::now());
     auto end = now.time_since_epoch().count();
-    long local_age_us = end - tmp.lu_sog_cog_ubx;
+    long local_age_us = end - tmp.lu_cog_ubx;
 
     if (m_debug_age_info_rate) {
-        m_debug_age_info.age_sog_cog = local_age_us;
-        m_debug_age_info.age_sog_cog_ubx = local_age_us;
+        m_debug_age_info.age_cog = local_age_us;
+        m_debug_age_info.age_cog_ubx = local_age_us;
     }
 
     if (local_age_us >= getValidityThreshold()) {
@@ -1068,11 +1029,11 @@ UBXNMEAParserSingleThread::getCourseOverGroundNmea(long *age_us, bool print_time
     out_t tmp = m_outBuffer.load();
     auto now = time_point_cast<microseconds>(system_clock::now());
     auto end = now.time_since_epoch().count();
-    long local_age_us = end - tmp.lu_sog_cog_nmea;
+    long local_age_us = end - tmp.lu_cog_nmea;
 
     if (m_debug_age_info_rate) {
-        m_debug_age_info.age_sog_cog = local_age_us;
-        m_debug_age_info.age_sog_cog_nmea = local_age_us;
+        m_debug_age_info.age_cog = local_age_us;
+        m_debug_age_info.age_cog_nmea = local_age_us;
     }
 
     if (local_age_us >= getValidityThreshold()) {
@@ -1267,26 +1228,37 @@ void UBXNMEAParserSingleThread::showDebugAgeInfo() {
         std::cout << "\nDebug Information\n\n";
         line_counter = 3;
 
-        std::cout << std::fixed << std::setprecision(12);
-        std::cout << "Lat-Lon:                " << buf.lat << " | " << buf.lon << "\tAge[us]: " << m_debug_age_info.age_pos << '\n';
-        std::cout << "Lat-Lon(UBX):           " << buf.lat_ubx << " | " << buf.lon_ubx << "\tAge[us]: " << m_debug_age_info.age_pos << '\n';
-        std::cout << "Lat-Lon(NMEA):          " << buf.lat_nmea << " | " << buf.lon_nmea << "\tAge[us]: " << m_debug_age_info.age_pos << '\n' << '\n';
+        std::cout << "Lat-Lon:                "
+            << std::fixed << std::setprecision(12)<< buf.lat << " | " << buf.lon << "\tAge/Last update[us]: " << m_debug_age_info.age_pos
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_pos
+            << " Delta[ms]: " << std::fixed << std::setprecision(3) << (m_debug_age_info.modified_age_pos - m_debug_age_info.age_pos) * 1e-3  << '\n';
+        std::cout << "Lat-Lon(UBX):           "
+            << std::fixed << std::setprecision(12)<< buf.lat_ubx << " | " << buf.lon_ubx << "\tAge[us]: " << m_debug_age_info.age_pos
+            << '\n';
+        std::cout << "Lat-Lon(NMEA):          "
+            << std::fixed << std::setprecision(12)<< buf.lat_nmea << " | " << buf.lon_nmea << "\tAge[us]: " << m_debug_age_info.age_pos
+            << '\n' << '\n';
         line_counter += 4;
 
         std::cout << std::fixed << std::setprecision(3);
-        std::cout << "Speed and Heading:       " << buf.sog << "[m/s]" << " | " << buf.cog <<"[deg]" << "\t Age[us]: " << m_debug_age_info.age_sog_cog << '\n';
-        std::cout << "Speed and Heading(UBX):  " << buf.sog_ubx << "[m/s]" << " | " << buf.cog_ubx <<"[deg]" << "\t Age[us]: " << m_debug_age_info.age_sog_cog << '\n';
-        std::cout << "Speed and Heading(NMEA): " << buf.sog_nmea << "[m/s]" << " | " << buf.cog_nmea <<"[deg]" << "\t Age[us]: " << m_debug_age_info.age_sog_cog << '\n' << '\n';
-        line_counter += 4;
+        std::cout << "Speed:         " << buf.sog << "[m/s]" << "\t Age[us]: " << m_debug_age_info.age_sog << '\n';
+        std::cout << "Heading:       " << buf.cog << "[deg]" << "\t Age[us]: " << m_debug_age_info.age_cog << '\n';
+        std::cout << "Speed(UBX):    " << buf.sog_ubx << "[m/s]" << "\t Age[us]: " << m_debug_age_info.age_sog_ubx << '\n';
+        std::cout << "Heading(UBX):  " << buf.cog_ubx << "[deg]" << "\t Age[us]: " << m_debug_age_info.age_cog_ubx << '\n';
+        std::cout << "Speed(NMEA):   " << buf.sog_nmea << "[m/s]" << "\t Age[us]: " << m_debug_age_info.age_sog_nmea << '\n';
+        std::cout << "Heading(NMEA): " << buf.cog_nmea << "[deg]" << "\t Age[us]: " << m_debug_age_info.age_cog_nmea << '\n' << '\n';
+        line_counter += 6;
 
         std::cout << "Longitudinal acc:        " << buf.comp_acc_x << " [m/s^2]" << "\tAge[us]: " << m_debug_age_info.age_comp_acc << '\n';
         std::cout << "Other accelerations:     " << "Y: " << buf.comp_acc_y << " | " << "Z: " << buf.comp_acc_z << " [m/s^2]" << "\tAge[us]: " << m_debug_age_info.age_comp_acc << '\n';
         std::cout << "Raw Accelerations:       " << "X: " << buf.raw_acc_x << " | " << "Y: " << buf.raw_acc_y << " | " << "Z: " << buf.raw_acc_z << " [m/s^2]" << "\tAge[us]: " << m_debug_age_info.age_acc << '\n' << '\n';
         line_counter += 4;
 
-        std::cout << "Roll Pitch Yaw:          " << buf.roll << " | " << buf.pitch << " | " << buf.heading << " [deg]" << "\tAge[us]: " << m_debug_age_info.age_att << '\n';
-        std::cout << "Yaw rate:                " << buf.comp_ang_rate_z << " [deg/s]" "\tAge[us]: " << m_debug_age_info.age_comp_ang_rate << '\n' << '\n';
-        line_counter += 3;
+        std::cout << "Roll:        " << buf.roll << " [deg]" << "\tAge[us]: " << m_debug_age_info.age_att << '\n';
+        std::cout << "Pitch:       " << buf.pitch << " [deg]" << "\tAge[us]: " << m_debug_age_info.age_att << '\n';
+        std::cout << "Yaw:         " << buf.roll  << " [deg]" << "\tAge[us]: " << m_debug_age_info.age_att << '\n' << '\n';
+        std::cout << "Yaw rate:    " << buf.comp_ang_rate_z << " [deg/s]" << "\tAge[us]: " << m_debug_age_info.age_comp_ang_rate << '\n' << '\n';
+        line_counter += 6;
 
         std::cout << "Altitude:                " << buf.alt << " [m]" << "\tAge[us]: " << m_debug_age_info.age_alt << '\n';
         std::cout << "Altitude(UBX):           " << buf.alt_ubx << " [m]" << "\tAge[us]: " << m_debug_age_info.age_alt << '\n';
@@ -1390,8 +1362,10 @@ UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
 
     // Updates age of information
     if (m_debug_age_info_rate) {
-        m_debug_age_info.age_sog_cog = update.time_since_epoch().count() - out_pvt.lu_sog_cog;
-        m_debug_age_info.age_sog_cog_ubx = update.time_since_epoch().count() - out_pvt.lu_sog_cog_ubx;
+        m_debug_age_info.age_sog = update.time_since_epoch().count() - out_pvt.lu_sog;
+        m_debug_age_info.age_cog = update.time_since_epoch().count() - out_pvt.lu_cog;
+        m_debug_age_info.age_sog_ubx = update.time_since_epoch().count() - out_pvt.lu_sog_ubx;
+        m_debug_age_info.age_cog_ubx = update.time_since_epoch().count() - out_pvt.lu_cog_ubx;
         m_debug_age_info.age_pos = update.time_since_epoch().count() - out_pvt.lu_pos;
         m_debug_age_info.age_pos_ubx = update.time_since_epoch().count() - out_pvt.lu_pos_ubx;
         m_debug_age_info.age_alt = update.time_since_epoch().count() - out_pvt.lu_alt;
@@ -1399,8 +1373,10 @@ UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
     }
 
     // Retrieves the time since epoch in microseconds and updates the output struct
-	out_pvt.lu_sog_cog = update.time_since_epoch().count();
-	out_pvt.lu_sog_cog_ubx = out_pvt.lu_sog_cog;
+	out_pvt.lu_sog = update.time_since_epoch().count();
+	out_pvt.lu_cog = update.time_since_epoch().count();
+	out_pvt.lu_sog_ubx = out_pvt.lu_sog;
+	out_pvt.lu_cog_ubx = out_pvt.lu_cog;
 	out_pvt.lu_pos = update.time_since_epoch().count();
 	out_pvt.lu_pos_ubx = out_pvt.lu_pos;
     out_pvt.lu_alt = update.time_since_epoch().count();
@@ -1522,13 +1498,17 @@ UBXNMEAParserSingleThread::parseNmeaRmc(std::string nmea_response) {
 	auto update = time_point_cast<microseconds>(system_clock::now());
 
     if (m_debug_age_info_rate) {
-        m_debug_age_info.age_sog_cog = update.time_since_epoch().count() - out_nmea.lu_sog_cog;
-        m_debug_age_info.age_sog_cog_nmea = update.time_since_epoch().count() - out_nmea.lu_sog_cog_nmea;
+        m_debug_age_info.age_sog = update.time_since_epoch().count() - out_nmea.lu_sog;
+        m_debug_age_info.age_cog = update.time_since_epoch().count() - out_nmea.lu_cog;
+        m_debug_age_info.age_sog_nmea = update.time_since_epoch().count() - out_nmea.lu_sog_nmea;
+        m_debug_age_info.age_cog_nmea = update.time_since_epoch().count() - out_nmea.lu_cog_nmea;
     }
 
     // Converts time_point to microseconds
-	out_nmea.lu_sog_cog = update.time_since_epoch().count();
-	out_nmea.lu_sog_cog_nmea = out_nmea.lu_sog_cog;
+	out_nmea.lu_sog = update.time_since_epoch().count();
+	out_nmea.lu_cog = update.time_since_epoch().count();
+	out_nmea.lu_sog_nmea = out_nmea.lu_sog;
+	out_nmea.lu_cog_nmea = out_nmea.lu_cog;
 
     // Validates data
     m_sog_cog_nmea_valid = true;
@@ -2076,7 +2056,6 @@ UBXNMEAParserSingleThread::readData() {
 	
 	// Initialization and preliminary operation on data buffer
     m_terminatorFlagPtr->store(false);
-    clearBuffer();
 
     std::cout << "Serial data reader thread started." << std::endl;
 
@@ -2137,8 +2116,6 @@ UBXNMEAParserSingleThread::startUBXNMEAParser(std::string device, int baudrate, 
     m_serial.SetParity(parity);
     m_serial.SetStopBits(stop_bits);
     m_serial.SetPortName(device);
-
-    clearBuffer();
 
     if(terminatorFlagPtr==nullptr) {
         std::cerr << "Error: Invalid pointer to terminator flag. Terminating." << std::endl;
