@@ -959,6 +959,7 @@ UBXNMEAParserSingleThread::parseNavAtt(std::vector<uint8_t> response) {
 	int offset = m_UBX_PAYLOAD_OFFSET + ATT_DATA_START_INDEX;
 	std::vector<uint8_t> att_data;
 
+    out_t prev_msg = m_prevMsgOutBuffer.load();
 	out_t out_att = m_outBuffer.load();
 
 	// Reading 4*3 bytes from byte 8 to byte 19 of the payload
@@ -987,7 +988,35 @@ UBXNMEAParserSingleThread::parseNavAtt(std::vector<uint8_t> response) {
 		att_data.push_back(response[i]);
 	}
 
-	// Produces and prints to struct the current date-time timestamp
+    // Account for the receiver silence offset (heading)
+    if (!areAlmostEqual(prev_msg.heading,out_att.heading)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_att.ts_att,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_att = update.time_since_epoch().count() - prev_msg.lu_att;
+        }
+        // Converts time_point to microseconds
+        out_att.lu_att = update.time_since_epoch().count();
+
+        // Validates data
+        m_att_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_att);
+        m_prevMsgOutBuffer.store(out_att);
+
+        return;
+    }
+
+    // Produces and prints to struct the current date-time timestamp
 	std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	strcpy(out_att.ts_att,std::ctime(&now));
 
@@ -1330,12 +1359,30 @@ void UBXNMEAParserSingleThread::showDebugAgeInfo() {
         line_counter += 4;
 
         std::cout << std::fixed << std::setprecision(3);
-        std::cout << "Speed:         " << buf.sog << "[m/s]" << "\t Age[us]: " << m_debug_age_info.age_sog << '\n';
-        std::cout << "Heading:       " << buf.cog << "[deg]" << "\t Age[us]: " << m_debug_age_info.age_cog << '\n';
-        std::cout << "Speed(UBX):    " << buf.sog_ubx << "[m/s]" << "\t Age[us]: " << m_debug_age_info.age_sog_ubx << '\n';
-        std::cout << "Heading(UBX):  " << buf.cog_ubx << "[deg]" << "\t Age[us]: " << m_debug_age_info.age_cog_ubx << '\n';
-        std::cout << "Speed(NMEA):   " << buf.sog_nmea << "[m/s]" << "\t Age[us]: " << m_debug_age_info.age_sog_nmea << '\n';
-        std::cout << "Heading(NMEA): " << buf.cog_nmea << "[deg]" << "\t Age[us]: " << m_debug_age_info.age_cog_nmea << '\n' << '\n';
+        std::cout << "Speed:         " << buf.sog << "[m/s]" << "\t Age/Last Update[us]: " << m_debug_age_info.age_sog
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_sog
+            << " Delta[ms]: " << (m_debug_age_info.modified_age_sog - m_debug_age_info.age_sog) * 1e-3  << '\n';
+
+        std::cout << "Heading:       " << buf.cog << "[deg]" << "\t Age/Last Update[us]: " << m_debug_age_info.age_cog
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_cog
+            << " Delta[ms]: " << (m_debug_age_info.modified_age_cog - m_debug_age_info.age_cog) * 1e-3  << '\n';
+
+        std::cout << "Speed(UBX):    " << buf.sog_ubx << "[m/s]" << "\t Age/Last Update[us]: " << m_debug_age_info.age_sog_ubx
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_sog_ubx
+            << " Delta[ms]: " << (m_debug_age_info.modified_age_sog_ubx - m_debug_age_info.age_sog_ubx) * 1e-3  << '\n';
+
+        std::cout << "Heading(UBX):  " << buf.cog_ubx << "[deg]" << "\t Age/Last Update[us]: " << m_debug_age_info.age_cog_ubx
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_cog_ubx
+            << " Delta[ms]: " << (m_debug_age_info.modified_age_cog_ubx - m_debug_age_info.age_cog_ubx) * 1e-3  << '\n';
+
+        std::cout << "Speed(NMEA):   " << buf.sog_nmea << "[m/s]" << "\t Age/Last Update[us]: " << m_debug_age_info.age_sog_nmea
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_sog_nmea
+            << " Delta[ms]: " << (m_debug_age_info.modified_age_sog_nmea - m_debug_age_info.age_sog_nmea) * 1e-3  << '\n';
+
+        std::cout << "Heading(NMEA): " << buf.cog_nmea << "[deg]" << "\t Age/Last Update[us]: " << m_debug_age_info.age_cog_nmea
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_cog_nmea
+            << " Delta[ms]: " << (m_debug_age_info.modified_age_cog_nmea - m_debug_age_info.age_cog_nmea) * 1e-3  << '\n' << '\n';
+
         line_counter += 6;
 
         std::cout << "Longitudinal acc:        " << buf.comp_acc_x << " [m/s^2]" << "\tAge[us]: " << m_debug_age_info.age_comp_acc << '\n';
@@ -1509,7 +1556,7 @@ UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
     }
 
     // Account for the receiver silence offset (SOG)
-    if (!areAlmostEqual(prev_msg.alt,out_pvt.alt)) {
+    if (!areAlmostEqual(prev_msg.sog,out_pvt.sog)) {
         // TODO: Adapt and modify the values, compensating the silence offset
 
         // Set the "last modified" field
@@ -1539,7 +1586,7 @@ UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
     }
 
     // Account for the receiver silence offset (COG)
-    if (!areAlmostEqual(prev_msg.alt,out_pvt.alt)) {
+    if (!areAlmostEqual(prev_msg.cog,out_pvt.cog)) {
         // TODO: Adapt and modify the values, compensating the silence offset
 
         // Set the "last modified" field
