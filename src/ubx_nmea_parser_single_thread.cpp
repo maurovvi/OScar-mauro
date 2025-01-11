@@ -458,6 +458,8 @@ UBXNMEAParserSingleThread::parseNmeaGns(std::string nmea_response) {
  */
 void
 UBXNMEAParserSingleThread::parseNmeaGga(std::string nmea_response) {
+
+    out_t prev_msg = m_prevMsgOutBuffer.load();
 	out_t out_nmea = m_outBuffer.load();
 
     std::vector<std::string> fields;
@@ -504,7 +506,68 @@ UBXNMEAParserSingleThread::parseNmeaGga(std::string nmea_response) {
 	}
 	else out_nmea.alt = 800001; //AltitudeValue_unvailable
 
-	// Produces and processes the current date-time timestamp
+    // Account for the receiver silence offset (LAT/LON)
+    if (!areAlmostEqual(prev_msg.lat,out_nmea.lat) && !areAlmostEqual(prev_msg.lon,out_nmea.lon)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_nmea.ts_pos,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_pos = update.time_since_epoch().count() - prev_msg.lu_pos;
+            m_debug_age_info.modified_age_pos_nmea = update.time_since_epoch().count() - prev_msg.lu_pos_nmea;
+        }
+        // Converts time_point to microseconds
+        out_nmea.lu_pos = update.time_since_epoch().count();
+        out_nmea.lu_pos_nmea = out_nmea.lu_pos;
+
+        // Validates data
+        m_pos_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_nmea);
+        m_prevMsgOutBuffer.store(out_nmea);
+
+        return;
+    }
+
+    // Account for the receiver silence offset (ALT)
+    if (!areAlmostEqual(prev_msg.alt,out_nmea.alt)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_nmea.ts_alt,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_alt = update.time_since_epoch().count() - prev_msg.lu_alt;
+            m_debug_age_info.modified_age_alt_nmea = update.time_since_epoch().count() - prev_msg.lu_alt_nmea;
+        }
+        // Converts time_point to microseconds
+        out_nmea.lu_alt = update.time_since_epoch().count();
+        out_nmea.lu_alt_nmea = out_nmea.lu_alt;
+
+        // Validates data
+        m_alt_valid = true;
+
+        // Updates the buffer
+
+        m_outBuffer.store(out_nmea);
+        m_prevMsgOutBuffer.store(out_nmea);
+
+        return;
+    }
+
+    // Produces and processes the current date-time timestamp
 	std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	strcpy(out_nmea.ts_pos,std::ctime(&now));
 
@@ -533,6 +596,7 @@ UBXNMEAParserSingleThread::parseNmeaGga(std::string nmea_response) {
 
     // Updates the buffer
 	m_outBuffer.store(out_nmea);
+    m_prevMsgOutBuffer.store(out_nmea);
 }
 
 /** getAltitude() provides the altitude above sea level
@@ -1444,6 +1508,66 @@ UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
         return;
     }
 
+    // Account for the receiver silence offset (SOG)
+    if (!areAlmostEqual(prev_msg.alt,out_pvt.alt)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_pvt.ts_sog_cog_ubx,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_sog = update.time_since_epoch().count() - prev_msg.lu_sog;
+            m_debug_age_info.modified_age_sog_ubx = update.time_since_epoch().count() - prev_msg.lu_sog_ubx;
+        }
+        // Converts time_point to microseconds
+        out_pvt.lu_sog = update.time_since_epoch().count();
+        out_pvt.lu_sog_ubx = out_pvt.lu_sog;
+
+        // Validates data
+        m_sog_cog_ubx_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_pvt);
+        m_prevMsgOutBuffer.store(out_pvt);
+
+        return;
+    }
+
+    // Account for the receiver silence offset (COG)
+    if (!areAlmostEqual(prev_msg.alt,out_pvt.alt)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_pvt.ts_sog_cog_ubx,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_cog = update.time_since_epoch().count() - prev_msg.lu_cog;
+            m_debug_age_info.modified_age_cog_ubx = update.time_since_epoch().count() - prev_msg.lu_cog_ubx;
+        }
+        // Converts time_point to microseconds
+        out_pvt.lu_cog = update.time_since_epoch().count();
+        out_pvt.lu_cog_ubx = out_pvt.lu_cog;
+
+        // Validates data
+        m_sog_cog_ubx_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_pvt);
+        m_prevMsgOutBuffer.store(out_pvt);
+
+        return;
+    }
+
     // Gets the update time with precision of microseconds
 	auto update = time_point_cast<microseconds>(system_clock::now());
 
@@ -1489,6 +1613,7 @@ UBXNMEAParserSingleThread::parseNmeaRmc(std::string nmea_response) {
     std::stringstream ss(nmea_response);
     std::string field;
 
+    out_t prev_msg = m_prevMsgOutBuffer.load();
     out_t out_nmea = m_outBuffer.load();
 
     while (std::getline(ss, field, ',')) {
@@ -1578,7 +1703,68 @@ UBXNMEAParserSingleThread::parseNmeaRmc(std::string nmea_response) {
         m_3d_valid_fix = false;
     }
 
-	// Produces and prints the current date-time timestamp
+    // Account for the receiver silence offset (SOG)
+    if (!areAlmostEqual(prev_msg.sog,out_nmea.sog)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_nmea.ts_sog_cog_nmea,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_sog = update.time_since_epoch().count() - prev_msg.lu_sog;
+            m_debug_age_info.modified_age_sog_nmea = update.time_since_epoch().count() - prev_msg.lu_sog_nmea;
+        }
+        // Converts time_point to microseconds
+        out_nmea.lu_sog = update.time_since_epoch().count();
+        out_nmea.lu_sog_nmea = out_nmea.lu_sog;
+
+        // Validates data
+        m_sog_cog_nmea_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_nmea);
+        m_prevMsgOutBuffer.store(out_nmea);
+
+        return;
+    }
+
+    // Account for the receiver silence offset (COG)
+    if (!areAlmostEqual(prev_msg.cog,out_nmea.cog)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_nmea.ts_sog_cog_nmea,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_cog = update.time_since_epoch().count() - prev_msg.lu_cog;
+            m_debug_age_info.modified_age_cog_nmea = update.time_since_epoch().count() - prev_msg.lu_cog_nmea;
+        }
+        // Converts time_point to microseconds
+        out_nmea.lu_cog = update.time_since_epoch().count();
+        out_nmea.lu_cog_nmea = out_nmea.lu_cog;
+
+        // Validates data
+        m_sog_cog_nmea_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_nmea);
+        m_prevMsgOutBuffer.store(out_nmea);
+
+        return;
+    }
+
+
+    // Produces and prints the current date-time timestamp
 	std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	strcpy(out_nmea.ts_sog_cog_nmea,std::ctime(&now));
 
