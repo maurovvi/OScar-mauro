@@ -359,7 +359,7 @@ UBXNMEAParserSingleThread::parseNmeaGns(std::string nmea_response) {
 	}
 	else out_nmea.alt = 800001; // AltitudeValue_unavailable
 
-    // Account for the receiver silence offset
+    // Account for the receiver silence offset (LAT/LON)
     if (!areAlmostEqual(prev_msg.lat,out_nmea.lat) && !areAlmostEqual(prev_msg.lon,out_nmea.lon)) {
         // TODO: Adapt and modify the values, compensating the silence offset
 
@@ -368,27 +368,48 @@ UBXNMEAParserSingleThread::parseNmeaGns(std::string nmea_response) {
         std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         strcpy(out_nmea.ts_pos,std::ctime(&now));
 
-        // Uncomment this line to join the position timestamp and the UTC time string
-        // strcat(out_nmea.ts_pos, utc_time.data());
-        strcpy(out_nmea.ts_utc_time_nmea, utc_time.data());
-
         // Gets the update time with precision of microseconds
         auto update = time_point_cast<microseconds>(system_clock::now());
 
         if (m_debug_age_info_rate) {
             m_debug_age_info.modified_age_pos = update.time_since_epoch().count() - prev_msg.lu_pos;
             m_debug_age_info.modified_age_pos_nmea = update.time_since_epoch().count() - prev_msg.lu_pos_nmea;
-            m_debug_age_info.modified_age_alt = update.time_since_epoch().count() - prev_msg.lu_alt;
-            m_debug_age_info.modified_age_alt_nmea = update.time_since_epoch().count() - prev_msg.lu_alt_nmea;
         }
         // Converts time_point to microseconds
         out_nmea.lu_pos = update.time_since_epoch().count();
         out_nmea.lu_pos_nmea = out_nmea.lu_pos;
+
+        // Validates data
+        m_pos_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_nmea);
+        m_prevMsgOutBuffer.store(out_nmea);
+
+        return;
+    }
+
+    // Account for the receiver silence offset (ALT)
+    if (!areAlmostEqual(prev_msg.alt,out_nmea.alt)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_nmea.ts_alt,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_alt = update.time_since_epoch().count() - prev_msg.lu_alt;
+            m_debug_age_info.modified_age_alt_nmea = update.time_since_epoch().count() - prev_msg.lu_alt_nmea;
+        }
+        // Converts time_point to microseconds
         out_nmea.lu_alt = update.time_since_epoch().count();
         out_nmea.lu_alt_nmea = out_nmea.lu_alt;
 
         // Validates data
-        m_pos_valid = true;
         m_alt_valid = true;
 
         // Updates the buffer
@@ -398,6 +419,7 @@ UBXNMEAParserSingleThread::parseNmeaGns(std::string nmea_response) {
 
         return;
     }
+
 
 	// Produces and processes the current date-time timestamp
 	std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -1233,11 +1255,14 @@ void UBXNMEAParserSingleThread::showDebugAgeInfo() {
             << " Last Modified[us]: " << m_debug_age_info.modified_age_pos
             << " Delta[ms]: " << std::fixed << std::setprecision(3) << (m_debug_age_info.modified_age_pos - m_debug_age_info.age_pos) * 1e-3  << '\n';
         std::cout << "Lat-Lon(UBX):           "
-            << std::fixed << std::setprecision(12)<< buf.lat_ubx << " | " << buf.lon_ubx << "\tAge[us]: " << m_debug_age_info.age_pos
-            << '\n';
+            << std::fixed << std::setprecision(12)<< buf.lat_ubx << " | " << buf.lon_ubx << "\tAge/Last update[us]: " << m_debug_age_info.age_pos
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_pos_ubx
+            << " Delta[ms]: " << std::fixed << std::setprecision(3) << (m_debug_age_info.modified_age_pos_ubx - m_debug_age_info.age_pos_ubx) * 1e-3  << '\n';
         std::cout << "Lat-Lon(NMEA):          "
-            << std::fixed << std::setprecision(12)<< buf.lat_nmea << " | " << buf.lon_nmea << "\tAge[us]: " << m_debug_age_info.age_pos
-            << '\n' << '\n';
+            << std::fixed << std::setprecision(12)<< buf.lat_nmea << " | " << buf.lon_nmea << "\tAge/Last update[us]: " << m_debug_age_info.age_pos
+            << " Last Modified[us]: " << m_debug_age_info.modified_age_pos_nmea
+            << " Delta[ms]: " << std::fixed << std::setprecision(3) << (m_debug_age_info.modified_age_pos_nmea - m_debug_age_info.age_pos_nmea) * 1e-3  << '\n'
+            << '\n';
         line_counter += 4;
 
         std::cout << std::fixed << std::setprecision(3);
@@ -1287,7 +1312,8 @@ UBXNMEAParserSingleThread::getValidityThreshold() {
 void
 UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
 
-	out_t out_pvt = m_outBuffer.load();
+    out_t prev_msg = m_prevMsgOutBuffer.load();
+    out_t out_pvt = m_outBuffer.load();
 
 	/* Extract the 4 bytes arrays containing the speed over ground and the heading of motion in the UBX-NAV-PVT message
 	 * Converts the arrays in little endian and retrieves the single signed value after scaling accordingly */
@@ -1357,7 +1383,68 @@ UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
 	strcpy(out_pvt.ts_nmea_ubx,std::ctime(&now));
     */
 
-	// Gets the update time with precision of microseconds
+    // Account for the receiver silence offset (LAT/LON)
+    if (!areAlmostEqual(prev_msg.lat,out_pvt.lat) && !areAlmostEqual(prev_msg.lon,out_pvt.lon)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_pvt.ts_pos,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_pos = update.time_since_epoch().count() - prev_msg.lu_pos;
+            m_debug_age_info.modified_age_pos_ubx = update.time_since_epoch().count() - prev_msg.lu_pos_ubx;
+        }
+        // Converts time_point to microseconds
+        out_pvt.lu_pos = update.time_since_epoch().count();
+        out_pvt.lu_pos_ubx = out_pvt.lu_pos;
+
+        // Validates data
+        m_pos_valid = true;
+
+        // Updates the buffer
+        m_outBuffer.store(out_pvt);
+        m_prevMsgOutBuffer.store(out_pvt);
+
+        return;
+    }
+
+    // Account for the receiver silence offset (ALT)
+    if (!areAlmostEqual(prev_msg.alt,out_pvt.alt)) {
+        // TODO: Adapt and modify the values, compensating the silence offset
+
+        // Set the "last modified" field
+        // Produces and processes the current date-time timestamp
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        strcpy(out_pvt.ts_alt,std::ctime(&now));
+
+        // Gets the update time with precision of microseconds
+        auto update = time_point_cast<microseconds>(system_clock::now());
+
+        if (m_debug_age_info_rate) {
+            m_debug_age_info.modified_age_alt = update.time_since_epoch().count() - prev_msg.lu_alt;
+            m_debug_age_info.modified_age_alt_ubx = update.time_since_epoch().count() - prev_msg.lu_alt_ubx;
+        }
+        // Converts time_point to microseconds
+        out_pvt.lu_alt = update.time_since_epoch().count();
+        out_pvt.lu_alt_ubx = out_pvt.lu_alt;
+
+        // Validates data
+        m_alt_valid = true;
+
+        // Updates the buffer
+
+        m_outBuffer.store(out_pvt);
+        m_prevMsgOutBuffer.store(out_pvt);
+
+        return;
+    }
+
+    // Gets the update time with precision of microseconds
 	auto update = time_point_cast<microseconds>(system_clock::now());
 
     // Updates age of information
@@ -1384,6 +1471,7 @@ UBXNMEAParserSingleThread::parseNavPvt(std::vector<uint8_t> response) {
 
     // Updates the buffer
     m_outBuffer.store(out_pvt);
+    m_prevMsgOutBuffer.store(out_pvt);
 
     // Validates data
     m_sog_cog_ubx_valid = true;
